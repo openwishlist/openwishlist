@@ -1,0 +1,438 @@
+
+import logging
+import os
+from datetime import timedelta
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from django.core.management.utils import get_random_secret_key
+
+from .custom_logger import LOGGING, configure_early_logging
+from .settings_utils import group_wishlists_env
+
+configure_early_logging()
+
+logger = logging.getLogger(__name__)
+
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    if os.getenv("DEBUG"):
+        logger.warning(
+            "python-dotenv is not installed. Environment variables will not be loaded from a .env file."
+        )
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv()
+
+
+try:
+    import corsheaders  # noqa: F401
+except ImportError:
+    HAS_CORSHEADERS = False
+else:
+    HAS_CORSHEADERS = True
+
+DEBUG = os.getenv("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434").strip().rstrip("/")
+envSecretKey = os.getenv("SECRET_KEY")
+
+
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Data Dir where DB, user uploads, etc. will be stored. Can be set via environment variable DATA_DIR, otherwise defaults to BASE_DIR/data
+data_directory = os.getenv("DATA_DIRECTORY")
+
+if data_directory:
+    DATA_DIR = Path(data_directory)
+else:
+    DATA_DIR = BASE_DIR / "data"
+    logger.warning(
+        "DATA_DIRECTORY environment variable is not set. Using default: %s",
+        DATA_DIR,
+    )
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Database
+DATABASE_PATH = Path(
+    os.getenv("DATABASE_PATH", DATA_DIR / "db.sqlite3")
+)
+
+
+# Quick-start development settings - unsuitable for production
+# See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = None
+if envSecretKey:
+    SECRET_KEY = envSecretKey
+else:
+    logger.warning("SECRET_KEY not found in environment variables. Using an unsafe fallback. This is not recommended for production.")
+    SECRET_KEY = "secretkey123"
+
+AUTH_USER_MODEL = "account_auth.CustomUser"
+
+ENABLE_SIGNUP = os.getenv("ENABLE_SIGNUP", "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+
+# Set this to false to prevent exposing the instance user list through wishlist sharing and allow users to be invited to wishlists by other users
+ALLOW_WISHLIST_USER_INVITES = os.getenv("ALLOW_WISHLIST_USER_INVITES", "true").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+
+
+def _csv_env(name, default):
+    raw_value = os.getenv(name)
+    if not raw_value:
+        return default
+
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _normalize_app_url(value):
+    """Return an origin from a URL or host[:port], defaulting bare hosts to HTTP."""
+    value = value.strip()
+    if not value:
+        return ""
+
+    if "://" not in value:
+        value = "http://" + value
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(
+            f"Invalid application URL {value!r}: use a hostname with optional http:// or https://"
+        )
+    # An origin has no path, query, or fragment. Keep an explicitly supplied port.
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _host_from_url(value):
+    """Return the host Django expects in ALLOWED_HOSTS (no scheme or port)."""
+    candidate = value if "://" in value else "//" + value
+    parsed = urlsplit(candidate)
+    hostname = parsed.hostname
+    if hostname is None:
+        return value.split("/", 1)[0]
+    # Django expects IPv6 hosts in ALLOWED_HOSTS to retain their brackets.
+    if ":" in hostname:
+        return f"[{hostname}]"
+    return hostname
+
+
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    "rest_framework",
+    'rest_framework.authtoken',
+    "rest_framework_api_key",
+
+    "wishlist",
+    "account_auth",
+    "openwishlist.apps.OpenWishlistConfig",
+]
+
+
+if HAS_CORSHEADERS:
+    INSTALLED_APPS.append("corsheaders")
+
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.auth.middleware.LoginRequiredMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+# APP_URL and APP_URLS accept full http(s) URLs or bare host[:port] values.
+# Bare hosts default to http; ports are retained for CSRF origins and removed
+# when deriving ALLOWED_HOSTS, which matches request Host values by hostname.
+APP_URL = os.getenv("APP_URL", "").strip()
+APP_URLS = _csv_env("APP_URLS", [])
+if not APP_URL and not APP_URLS:
+    logger.warning(
+        "APP_URL environment variable is not set. This may cause issues with CSRF protection."
+    )
+
+
+allowed_hosts_env = _csv_env("ALLOWED_HOSTS", ["localhost", "127.0.0.1", "[::1]", "testserver"])
+
+ALLOWED_HOSTS = [_host_from_url(host) for host in allowed_hosts_env]
+
+APP_URLS = [url for url in (_normalize_app_url(item) for item in APP_URLS) if url]
+APP_URL = _normalize_app_url(APP_URL) if APP_URL else ""
+# With only APP_URLS set, the first entry is the canonical origin (e.g. for the OIDC redirect URI).
+if not APP_URL and APP_URLS:
+    APP_URL = APP_URLS[0]
+for url in ([APP_URL] if APP_URL else []) + APP_URLS:
+    host = _host_from_url(url)
+    if host and host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(host)
+
+if HAS_CORSHEADERS:
+    MIDDLEWARE.insert(1, 'corsheaders.middleware.CorsMiddleware')
+
+# CORS is only needed when frontend and backend use different origins.
+if HAS_CORSHEADERS:
+    CORS_ALLOW_CREDENTIALS = True
+    CORS_ALLOWED_ORIGINS = _csv_env(
+        "CORS_ALLOWED_ORIGINS",
+        [],
+    )
+    # Downloads read the server's filename from this header, e.g. the date of an instance backup.
+    CORS_EXPOSE_HEADERS = ["Content-Disposition"]
+
+if APP_URL or APP_URLS:
+    CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(([APP_URL] if APP_URL else []) + APP_URLS))
+else:
+    CSRF_TRUSTED_ORIGINS = []
+    logger.warning(
+        "Neither APP_URL nor APP_URLS is set. This may cause issues with CSRF protection."
+    )
+
+
+def _env_flag(name, default):
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# OpenID Connect login (mozilla-django-oidc, authorization code flow with PKCE).
+# Endpoints are discovered from OIDC_ISSUER unless they are set explicitly.
+OIDC_ENABLED = _env_flag("OIDC_ENABLED", False)
+OIDC_ISSUER = os.getenv("OIDC_ISSUER", "").strip()
+OIDC_RP_CLIENT_ID = os.getenv("OIDC_CLIENT_ID", "").strip()
+OIDC_RP_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "").strip()  # Empty for public clients (PKCE only)
+OIDC_RP_SCOPES = os.getenv("OIDC_SCOPES", "openid profile email").strip()
+OIDC_RP_SIGN_ALGO = os.getenv("OIDC_SIGN_ALGO", "RS256").strip()
+OIDC_OP_AUTHORIZATION_ENDPOINT = os.getenv("OIDC_AUTHORIZATION_ENDPOINT", "").strip()
+OIDC_OP_TOKEN_ENDPOINT = os.getenv("OIDC_TOKEN_ENDPOINT", "").strip()
+OIDC_OP_USER_ENDPOINT = os.getenv("OIDC_USERINFO_ENDPOINT", "").strip()
+OIDC_OP_JWKS_ENDPOINT = os.getenv("OIDC_JWKS_ENDPOINT", "").strip()
+OIDC_USERNAME_CLAIM = os.getenv("OIDC_USERNAME_CLAIM", "preferred_username").strip()
+OIDC_NAME_CLAIM = os.getenv("OIDC_NAME_CLAIM", "name").strip()
+OIDC_EMAIL_CLAIM = os.getenv("OIDC_EMAIL_CLAIM", "email").strip()
+OIDC_CREATE_USERS = _env_flag("OIDC_CREATE_USERS", True)
+# Off by default: linking by email lets whoever controls that address at the provider take over the account.
+OIDC_LINK_EXISTING_BY_EMAIL = _env_flag("OIDC_LINK_EXISTING_BY_EMAIL", False)
+OIDC_AUTO_REDIRECT = _env_flag("OIDC_AUTO_REDIRECT", False)
+OIDC_BUTTON_LABEL = os.getenv("OIDC_BUTTON_LABEL", "").strip()
+OIDC_TIMEOUT = int(os.getenv("OIDC_TIMEOUT", "10"))
+# Plain http for the issuer and endpoints is refused except on loopback; this allows it (tests only).
+OIDC_ALLOW_INSECURE_HTTP = _env_flag("OIDC_ALLOW_INSECURE_HTTP", False)
+OIDC_TOKEN_USE_BASIC_AUTH = _env_flag("OIDC_TOKEN_USE_BASIC_AUTH", False)  # client_secret_basic instead of _post
+# Full redirect URI registered at the provider; defaults to APP_URL + /api/oidc/callback/.
+OIDC_REDIRECT_URI = os.getenv("OIDC_REDIRECT_URI", "").strip()
+# CA certificate file (PEM) or directory for a provider with a private or self-signed certificate.
+OIDC_CA_BUNDLE = os.getenv("OIDC_CA_BUNDLE", "").strip()
+# Turns off certificate checks for provider requests. Anyone on the network path can then read
+# the client secret and log in as any user; prefer OIDC_CA_BUNDLE.
+OIDC_SKIP_SSL_VERIFICATION = _env_flag("OIDC_SKIP_SSL_VERIFICATION", False)
+OIDC_USE_PKCE = True
+
+
+
+if OIDC_ENABLED and not (OIDC_ISSUER and OIDC_RP_CLIENT_ID):
+    logger.warning("OIDC_ENABLED is set, but OIDC_ISSUER or OIDC_CLIENT_ID is missing. OIDC login stays disabled.")
+
+# Disables password login and signup for everyone except LOCAL_LOGIN_USERS (break-glass accounts,
+# by default the initial administrator), so the instance stays reachable when the provider is down.
+DISABLE_LOCAL_LOGIN = _env_flag("DISABLE_LOCAL_LOGIN", False)
+_init_admin_username = os.getenv("INIT_ADMIN_USERNAME", "").strip()
+LOCAL_LOGIN_USERS = _csv_env("LOCAL_LOGIN_USERS", [_init_admin_username] if _init_admin_username else [])
+
+if DISABLE_LOCAL_LOGIN and not LOCAL_LOGIN_USERS:
+    logger.warning("DISABLE_LOCAL_LOGIN is set without LOCAL_LOGIN_USERS. No account can log in with a password.")
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "account_auth.oidc.OIDCBackend",
+]
+
+
+
+
+ROOT_URLCONF = 'openwishlist.urls'
+
+#media settings
+MEDIA_URL = '/media/'
+MEDIA_ROOT = DATA_DIR / "media"
+
+LOGIN_URL = '/login'
+LOGIN_REDIRECT_URL = '/login'
+
+
+ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png']
+# max file size (in bytes, z.B. 5 MB)
+MAX_FILE_SIZE = 4 * 1024 * 1024  # 5 MB
+
+
+DEFAULT_RENDERER_CLASSES = (
+    'rest_framework.renderers.JSONRenderer',
+)
+
+if DEBUG: #enable admin interface style when debug true
+    DEFAULT_RENDERER_CLASSES = DEFAULT_RENDERER_CLASSES + (
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    )
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework.authentication.SessionAuthentication',
+        #'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+    'DEFAULT_RENDERER_CLASSES': DEFAULT_RENDERER_CLASSES,
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        # Keep normal browser use well below the limit while preventing anonymous API floods.
+        'anon': os.getenv('DRF_ANON_RATE', '60/minute'),
+        'user': os.getenv('DRF_USER_RATE', '600/minute'),
+        # Login, signup, credential reset, and OIDC callbacks can trigger expensive work.
+        'auth': os.getenv('DRF_AUTH_RATE', '10/minute'),
+    },
+    # Set this to the number of trusted proxy hops after nginx normalizes the client IP.
+    'NUM_PROXIES': int(os.getenv('DRF_NUM_PROXIES', '0')),
+}
+
+# Register custom model for API keys, so the default model is not created
+API_KEY_MODEL = "account_auth.UserAPIKey"
+
+SIMPLE_JWT= {
+   'SIGNING_KEY': SECRET_KEY,
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=10),
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": False,
+}
+
+#AllAuth
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_AUTHENTICATION_METHOD = 'email'
+ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
+ACCOUNT_CONFIRM_EMAIL_ON_GET = True
+
+ACCOUNT_EMAIL_CONFIRMATION_EXPIRE_DAYS = 1 
+ACCOUNT_EMAIL_UNKNOWN_ACCOUNTS = False 
+REST_AUTH = {
+    'REGISTER_SERIALIZER': 'auth.serializers.CustomRegisterSerializer',
+}
+
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = 'openwishlist.wsgi.application'
+
+
+# Database
+# https://docs.djangoproject.com/en/5.0/ref/settings/#databases
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': DATABASE_PATH,
+    }
+}
+
+
+# Password validation
+# https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
+
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+]
+
+
+# Internationalization
+# https://docs.djangoproject.com/en/5.0/topics/i18n/
+
+LANGUAGE_CODE = 'en-us'
+
+TIME_ZONE = 'UTC'
+
+USE_I18N = True
+
+USE_TZ = True
+
+USE_X_FORWARDED_HOST = True
+
+# When every configured origin is https, TLS ends at a reverse proxy in front of the bundled nginx,
+# which forwards the original scheme. Trust it for request.is_secure() and send cookies only over https.
+# With a single http origin left, secure cookies would break logins there, so everything stays off.
+_app_origins = ([APP_URL] if APP_URL else []) + APP_URLS
+_https_only = bool(_app_origins) and all(url.startswith("https://") for url in _app_origins)
+SESSION_COOKIE_SECURE = _https_only
+CSRF_COOKIE_SECURE = _https_only
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if _https_only else None
+# Cookies are scoped by host, not by scheme or port: a host reachable over http and https would
+# send the session cookie of an https login over http as well.
+_schemes_by_host = {}
+for _url in _app_origins:
+    _origin = urlsplit(_url)
+    if _origin.hostname:
+        _schemes_by_host.setdefault(_origin.hostname, set()).add(_origin.scheme)
+for _host, _schemes in sorted(_schemes_by_host.items()):
+    if {"http", "https"} <= _schemes:
+        logger.warning(
+            "APP_URL/APP_URLS list %s over both http and https. Session cookies are not marked secure, "
+            "so a browser sends the cookie of an https login over http to this host as well. "
+            "Use a different host name for http access.",
+            _host,
+        )
+
+
+# Static files (CSS, JavaScript, Images)
+# https://docs.djangoproject.com/en/5.0/howto/static-files/
+
+STATIC_URL = '/static/'
+STATIC_ROOT = DATA_DIR / "staticfiles"
+STATICFILES_DIRS = [
+    os.path.join(DATA_DIR, 'static'),
+]
+# Default primary key field type
+# https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
