@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { SessionGuard } from "@/components/auth/session-guard"
 import AppLayout from "@/layouts/AppLayout"
 import Dashboard from "@/routes/Dashboard"
+import Start from "@/routes/Start"
 import ErrorPage from "@/routes/Error"
 import LoginPage from "@/routes/auth/Login"
 import SignupPage from "@/routes/auth/Signup"
@@ -30,7 +31,8 @@ const router = createBrowserRouter([
     element: <SessionGuard mode="protected" />,
     children: [{ element: <AppLayout />, children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
-      { path: "dashboard", element: <Dashboard /> },
+      { path: "dashboard", element: <Start /> },
+      { path: "wishlists", element: <Dashboard /> },
       { path: "settings", element: <SettingsPage /> },
     ] }],
   },
