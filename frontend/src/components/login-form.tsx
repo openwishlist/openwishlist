@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 import { useLocation, useNavigate, useSearchParams } from "react-router"
-import { GalleryVerticalEndIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -111,9 +110,7 @@ export function LoginForm({
               href="#"
               className="flex flex-col items-center gap-2 font-medium"
             >
-              <div className="flex size-8 items-center justify-center rounded-md">
-                <GalleryVerticalEndIcon className="size-6" />
-              </div>
+              <img src="/openwishlist-icon.svg" alt="" className="size-10" />
               <span className="sr-only">OpenWishlist</span>
             </a>
             <h1 className="text-xl font-bold">Welcome to OpenWishlist</h1>
