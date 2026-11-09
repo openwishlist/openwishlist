@@ -1,4 +1,12 @@
-# React + TypeScript + Vite
+<p align="center">
+  <img src="../public/openwishlist-icon.svg" alt="OpenWishlist icon" width="64" height="64" />
+</p>
+
+<h1 align="center">OpenWishlist Frontend</h1>
+
+<p align="center">The responsive web interface for OpenWishlist.</p>
+
+## Development
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
