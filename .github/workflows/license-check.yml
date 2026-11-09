@@ -12,17 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Generate Bot Token
-      id: get-bot-token
-      uses: actions/create-github-app-token@v3
-      with:
-        app-id: ${{ secrets.BOT_APP_ID }}
-        private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
     - name: Checkout Code
       uses: actions/checkout@v7
       with:
-        token: ${{ steps.get-bot-token.outputs.token }}
+        token: ${{ secrets.GITHUB_TOKEN }}
         ref: ${{ github.head_ref || github.ref }}
 
     - name: Set up Python
@@ -74,8 +68,8 @@ jobs:
     - name: Commit and Push Updated License Files
       if: github.event_name == 'push'
       run: |
-        git config user.name "openwishlist-bot"
-        git config user.email "343908301+openwishlist-bot[bot]@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
         if [ -n "$(git status --porcelain backend/THIRD-PARTY-NOTICES-PYTHON.txt frontend/THIRD_PARTY_LICENSES.md)" ]; then
           echo "📝 License files changed. Committing updates..."

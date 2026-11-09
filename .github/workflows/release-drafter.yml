@@ -1,14 +1,12 @@
 name: Release Drafter
 
 on:
-    pull_request_target:
-        types: ["opened", "closed", "reopened", "synchronize"]
-    push:
-        branches:
-        - main
+  pull_request_target:
+    types: ["opened", "closed", "reopened", "synchronize"]
+  push:
+    branches:
+      - main
 
-
-# Permissions for the default token.
 permissions:
   contents: write
   pull-requests: read
@@ -17,15 +15,7 @@ jobs:
   update_release_draft:
     runs-on: ubuntu-slim
     steps:
-      - name: Generate Bot Token
-        id: get-bot-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ secrets.BOT_CLIENT_ID }}
-          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
-
       - uses: release-drafter/release-drafter@v7
         with:
-          token: ${{ steps.get-bot-token.outputs.token }}
-          # This default loads .github/release-drafter.yml.
+          token: ${{ secrets.GITHUB_TOKEN }}
           config-name: release-drafter.yml
