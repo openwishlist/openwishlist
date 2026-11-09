@@ -1,5 +1,4 @@
 import { deleteData, downloadFile, fetchData, patchData, postData } from "./base"
-import { refreshEnabledModules } from "./modules"
 
 
 export type InstanceSettings = {
@@ -16,7 +15,6 @@ export async function getInstanceSettings() {
 
 export async function updateInstanceSettings(settings: Partial<InstanceSettings>) {
   const updated = await patchData<InstanceSettings>('/api/instance-settings/', settings)
-  if (settings.enabled_modules !== undefined) refreshEnabledModules()
   return updated
 }
 
